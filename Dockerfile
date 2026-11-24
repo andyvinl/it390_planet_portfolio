@@ -17,7 +17,7 @@ COPY planets/ planets/
 COPY templates/ templates/
 COPY static/ static/
 COPY --from=web /web/dist web/dist
-RUN useradd --uid 10001 --no-create-home galaxy
+RUN useradd --uid 10001 --create-home galaxy
 USER 10001
 # CI passes the commit's tag in, so the page and /health show which image is running.
 ARG APP_VERSION=dev

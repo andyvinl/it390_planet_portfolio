@@ -1,0 +1,14 @@
+{
+  "slug": "andy",
+  "order": 4,
+  "title": "Andy",
+  "summary": "Kubernetes & operations · networking and reliability",
+  "about": "I run the galaxy on Kubernetes: the Deployments and Services, the readiness probe, scaling, rolling updates and rollbacks.",
+  "size": "large",
+  "appearance": { "style": "rocky", "color": "#7fd6a0", "rings": { "on": true, "color": "#d9c9a3", "tilt": 18 } },
+  "projects": [
+    { "slug": "galaxy-on-kind", "title": "Portfolio Galaxy on kind", "summary": "Two galaxy pods and Redis, reached by Service name.", "tags": ["kubernetes", "networking"] },
+    { "slug": "rollout-and-rollback", "title": "Rollouts and Rollbacks", "summary": "Zero-downtime updates with kubectl set image, undone with rollout undo.", "tags": ["kubernetes", "reliability"] },
+    { "slug": "bird", "title": "B.I.R.D. Prompt-Injection Defense", "summary": "Fine-tuned Qwen2.5-3B with LoRA to analyze logs and resist prompt injection; 77.5% on a held-out Security+ test.", "tags": ["security", "ai", "python"] }
+  ]
+}
