@@ -44,6 +44,7 @@ jobs:
         run: |
           echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/galaxy" >> "$GITHUB_OUTPUT"
           echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Log in to GHCR
         if: github.event_name == 'push'
@@ -58,5 +59,6 @@ jobs:
         with:
           context: .
           push: ${{ github.event_name == 'push' }}
+          platforms: linux/amd64,linux/arm64
           build-args: APP_VERSION=${{ steps.meta.outputs.tag }}
           tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
