@@ -482,3 +482,57 @@ flowchart LR
 <!-- Replace this with the problem YOUR team hit and fixed: the checklist grades your own story. -->
 
 When we first ran the image, `curl localhost:8080/health` right after `docker run` failed with `Recv failure: Connection was aborted`, and it looked like the container was broken. `docker ps` showed it `Up` with `health: starting`, and a few seconds later `/health` answered normally. Gunicorn takes a moment to start, and we had sent the request before it was listening. The fix was to wait for the health check (`docker ps` shows `(healthy)`) before testing. It's also why the Kubernetes readiness probe matters: Kubernetes waits for exactly that before sending a pod any traffic.
+## Kubernetes and operations (Andy)
+
+The galaxy runs on a local [kind](https://kind.sigs.k8s.io/) cluster: two galaxy pods behind one Service, and Redis beside them.
+
+### What each object does
+
+| Object | File | What it does |
+| --- | --- | --- |
+| `Deployment galaxy` | `k8s/galaxy.yaml` | Keeps 2 galaxy pods running, replaces any that die, and updates them one at a time (`maxSurge: 1`, `maxUnavailable: 0`), so the site never goes down during a rollout |
+| Readiness probe | `k8s/galaxy.yaml` | Calls `GET /health` every 5 s. A pod gets no traffic until it answers 200 |
+| `env:` | `k8s/galaxy.yaml` | All settings as plain values (`GALAXY_OWNER`, `GALAXY_COLOR`, `ENVIRONMENT`, `REDIS_HOST`, `REDIS_PORT`). Changing one rolls out new pods; no rebuild |
+| `POD_NAME` | `k8s/galaxy.yaml` | Filled in by Kubernetes with each pod's own name, shown in the page footer |
+| `Service galaxy` | `k8s/galaxy.yaml` | One stable name and port (80) in front of whichever galaxy pods are ready |
+| `Deployment redis` + `Service redis` | `k8s/redis.yaml` | The visit counter. The galaxy reaches it as `redis:6379`, by Service name, never by IP |
+
+Images are always referenced by their CI `sha-` tag, never `latest`, so every deploy and rollback points at an exact build.
+
+### Deploy
+
+```bash
+kind create cluster --name galaxy
+kubectl apply -f k8s/
+kubectl get pods -w                      # 2 galaxy + 1 redis, all 1/1 Running
+kubectl port-forward svc/galaxy 8080:80  # open http://localhost:8080
+```
+
+### Operations runbook
+
+| Operation | Command | What happened |
+| --- | --- | --- |
+| Scale | `kubectl scale deploy/galaxy --replicas=3`, then `--replicas=2` | A third pod started and joined the Service; scaling back removed it |
+| Self-healing | `kubectl delete pod galaxy-5bf84d8c6d-7vlsn` | The Deployment started `galaxy-5bf84d8c6d-nqstv` within a second to get back to 2 replicas |
+| Rolling update | `kubectl set env deploy/galaxy GALAXY_COLOR="#e0452b"` then `kubectl rollout status deploy/galaxy` | Pods were replaced one at a time ("1 out of 2 new replicas have been updated", then "1 old replicas are pending termination"); the home planet turned red with no downtime |
+| Rollback | `kubectl rollout undo deploy/galaxy` | Went back to the previous revision; the original color returned. `kubectl rollout history` lists the restored revision under a new number |
+| New image | `kubectl set image deploy/galaxy galaxy=ghcr.io/sebastianowicki/galaxy:sha-<tag>` | Rolls out a new CI build the same way |
+| Redis outage | `kubectl scale deploy/redis --replicas=0`, then `--replicas=1` | Pages kept working and the visit counter showed a dash; it came back when Redis did |
+
+After a rollback, put the tag you want to keep into `k8s/galaxy.yaml` and commit it. `rollout undo` changes the running Deployment but not the file, so a later `kubectl apply` would bring the file's image back. kubectl warns about this when you undo a Deployment created with `apply`.
+
+### Troubleshooting
+
+**1. Pods stuck in `ImagePullBackOff` on an Apple Silicon Mac**
+
+- **Symptom:** after `kubectl apply`, Redis was `1/1 Running` but both galaxy pods cycled between `ErrImagePull` and `ImagePullBackOff`. `kubectl port-forward` failed with "pod is not running".
+- **Diagnosis:** `kubectl get events --field-selector reason=Failed` showed:
+  `failed to pull and unpack image "ghcr.io/sebastianowicki/galaxy:sha-35b71ae": no match for platform in manifest: not found`
+  The image existed and was public (otherwise the error would say `denied`), but CI had built it only for `linux/amd64`. The kind node on an M-series Mac is `linux/arm64`.
+- **Fix:** added `docker/setup-qemu-action@v3` and `platforms: linux/amd64,linux/arm64` to the build step in `.github/workflows/ci.yml`, so every published image runs on both. Until that image was published, loaded a locally built image into kind with `kind load docker-image galaxy:local --name galaxy` and `kubectl set image`.
+
+**2. `Permission denied: '/home/galaxy'` in the container logs**
+
+- **Symptom:** on every start, gunicorn logged `[ERROR] Control server error: [Errno 13] Permission denied: '/home/galaxy'`. The site still served pages.
+- **Diagnosis:** the Dockerfile creates the non-root user with `useradd --uid 10001 --no-create-home galaxy`, so `/home/galaxy` doesn't exist. Gunicorn 26 writes a control socket in the user's home folder.
+- **Fix:** changed `--no-create-home` to `--create-home` in the Dockerfile. The container still runs as non-root user 10001, and the error is gone.
